@@ -1,0 +1,8 @@
+1320
+sub-TX0142
+8
+Running FEAT for sub-TX0142_8 ses-1...
+[GFX1-]: More than 2 GPUs detected via PCI, secondary GPU is arbitrary
+
+[GFX1-]: RenderCompositorSWGL failed mapping default framebuffer, no dt
+Finished

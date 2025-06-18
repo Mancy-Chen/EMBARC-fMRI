@@ -1,0 +1,6 @@
+1320
+sub-TX0172
+2
+Running FEAT for sub-TX0172_2 ses-2...
+Finished
+slurmstepd: error: Unable to unlink domain socket `/var/spool/slurmd/hinton_20503.4294967291`: No such file or directory

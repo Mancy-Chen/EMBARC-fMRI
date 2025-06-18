@@ -1,0 +1,66 @@
+{
+    "descriptions": [
+        {
+            "dataType": "anat",
+            "modalityLabel": "T1w",
+            "criteria": {
+                "SeriesDescription": "SAG3D FSPGR 11 Flip 1 NEX"
+            },
+            "customLabels": ""
+        },
+        {
+            "dataType": "func",
+            "modalityLabel": "bold",
+            "task": "ert",
+            "criteria": {
+                "SeriesDescription": "ESTROOP 397 5 dummy 39 sl"
+            },
+            "customLabels": ""
+        },
+        {
+            "dataType": "func",
+            "modalityLabel": "bold",
+            "task": "rest",
+            "criteria": {
+                "SeriesDescription": "RESTING 180 5 DUM 39 sl"
+            },
+            "customLabels": "run-1"
+        },
+        {
+            "dataType": "func",
+            "modalityLabel": "bold",
+            "task": "rest",
+            "criteria": {
+                "SeriesDescription": "RESTING 180 5 DUM 39 sl"
+            },
+            "customLabels": "run-2"
+        },
+        {
+            "dataType": "func",
+            "modalityLabel": "bold",
+            "task": "reward",
+            "criteria": {
+                "SeriesDescription": "REWARD 240 3 DUM"
+            },
+            "customLabels": ""
+        },
+        {
+            "dataType": "fmap",
+            "modalityLabel": "magnitude1",
+            "criteria": {
+                "SeriesDescription": "B0 Map for BOLD 39 sl",
+                "EchoTime": "TE6.50"
+            },
+            "customLabels": "acq-func"
+        },
+        {
+            "dataType": "fmap",
+            "modalityLabel": "magnitude2",
+            "criteria": {
+                "SeriesDescription": "B0 Map for BOLD 39 sl",
+                "EchoTime": "TE8.50"
+            },
+            "customLabels": "acq-func"
+        }
+    ]
+}

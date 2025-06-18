@@ -1,0 +1,8 @@
+3320
+sub-CU0102
+4
+Running FEAT for sub-CU0102_4 ses-2...
+[GFX1-]: More than 2 GPUs detected via PCI, secondary GPU is arbitrary
+
+[GFX1-]: RenderCompositorSWGL failed mapping default framebuffer, no dt
+Finished

@@ -1,0 +1,67 @@
+%% script to calculate motion based on an fmriprep pipeline
+
+% define directories for all subjects and set the scrub-threshold (max
+% motion in framewise displacement)
+addpath('/.../ANALYSIS/MRI/taak-fmri/gonogo/GONOGO_2021/scripts/motion')
+maindir='/.../DATA/MRI/BIDS/data/derivatives/fmriprep-v1.2.3/fmriprep/';
+outdir='/.../ANALYSIS/MRI/taak-fmri/gonogo/GONOGO_2021/feat';
+analysisdir=fullfile(outdir,'gonogo_confoundev_2');
+dirs=dir(fullfile(maindir,'sub-*'));
+dirFlags=[dirs.isdir];
+subjects=dirs(dirFlags);
+scrub_threshold=2;
+ses={'ses-BL', 'ses-TT', 'ses-PT'};
+runs=[1,2];
+delete_volumes=1;
+
+for sub=1:length(subjects);
+disp(['working on subject ' subjects(sub).name])
+    for session=1:length(ses)
+        for run=1:length(runs);
+          
+          filename=fullfile(maindir,subjects(sub).name, ses{session}, 'func',[subjects(sub).name '_' ses{session} '_task-gonogo_run-' num2str(runs(run)) '_desc-confounds_regressors.tsv'])
+                                                                        
+          % extract subject number so that it can be added to the matrix
+          subj_name(sub) = str2double(regexp((subjects(sub).name),'\d*','Match'));
+        
+          % extract FD from .tsv file from fmriprep (version 1.2.3) and
+          % calculate mean and number of scrubbed volumes
+          if exist(filename)==2;
+          FD_full_length=getFramewiseDisplacement_epod(filename);
+          FD=FD_full_length(delete_volumes+1:end);
+          %meanFD(sub,session,run)=mean(FD); 
+          idx=FD>scrub_threshold;
+          %percentage_scrubbed(sub,session,run)=sum(idx(:))/size(FD,1);
+          idx_invert=~idx;
+          meanFD_afterscrub(sub,session,run)=mean(FD(idx_invert));
+          
+% %           % write confound matrix
+%           if sum(idx)~=0      
+%           matrix=zeros(length(idx),sum(idx));
+%             for i=1:sum(idx);
+%                 V1=find(idx==1);
+%                 matrix(V1(i),i)=1;
+%             end
+%                 subdir=fullfile(analysisdir,subjects(sub).name);
+%                 if exist(subdir)==0; mkdir(subdir); end          
+%                 confound_name=fullfile(subdir,[subjects(sub).name '_' ses{session} '_run' num2str(runs(run)) '_confound_ev.txt']);
+%                 dlmwrite(confound_name, matrix,'delimiter','\t');         
+%           end
+
+          else   
+          %meanFD(sub,session,run)=NaN;  
+          meanFD_afterscrub(sub,session,run)=NaN;  
+          %percentage_scrubbed(sub,session,run)=NaN;
+          end
+        end 
+    end 
+end
+
+cd(analysisdir)
+squeeze_meanFD=[squeeze(meanFD(:,:,1)),squeeze(meanFD(:,:,2))]; meanFD_combined= [subj_name' squeeze_meanFD]; 
+csvwrite('meanFD_gonogo_leftovers.csv',meanFD_combined);
+squeeze_percentage_scrubbed=[squeeze(percentage_scrubbed(:,:,1)),squeeze(percentage_scrubbed(:,:,2))]; percentage_scrubbed_combined= [subj_name' squeeze_percentage_scrubbed]; 
+csvwrite('percentage_scrubbed_gonogo_leftovers.csv',percentage_scrubbed_combined);
+
+squeeze_meanFD_scrubbed=[squeeze(meanFD_afterscrub(:,:,1)),squeeze(meanFD_afterscrub(:,:,2))]; meanFD_combined_scrubbed= [subj_name' squeeze_meanFD_scrubbed]; 
+csvwrite('meanFD_scrubbed_gonogo.csv',meanFD_combined_scrubbed);

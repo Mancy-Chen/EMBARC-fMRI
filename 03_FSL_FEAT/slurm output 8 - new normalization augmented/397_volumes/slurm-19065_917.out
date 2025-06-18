@@ -1,0 +1,8 @@
+2320
+sub-TX0093
+9
+Running FEAT for sub-TX0093_9 ses-2...
+[GFX1-]: More than 2 GPUs detected via PCI, secondary GPU is arbitrary
+
+[GFX1-]: RenderCompositorSWGL failed mapping default framebuffer, no dt
+Finished
