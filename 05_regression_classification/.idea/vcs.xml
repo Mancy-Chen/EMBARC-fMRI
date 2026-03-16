@@ -4,14 +4,5 @@
     <mapping directory="$PROJECT_DIR$/../.." vcs="Git" />
     <mapping directory="$PROJECT_DIR$/.." vcs="Git" />
     <mapping directory="$PROJECT_DIR$" vcs="" />
-    <mapping directory="$PROJECT_DIR$/classification_GPU/xgboost" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/classification_GPU/xgboost/dmlc-core" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/classification_GPU/xgboost/gputreeshap" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/xgboost-build/xgboost" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/xgboost-build/xgboost/dmlc-core" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/xgboost-build/xgboost/gputreeshap" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/xgboost_local_backup" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/xgboost_local_backup/dmlc-core" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/xgboost_local_backup/gputreeshap" vcs="Git" />
   </component>
 </project>

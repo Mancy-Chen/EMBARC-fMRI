@@ -1,6 +1,6 @@
 # Mancy Chen 20/02/2025
 # Classification with BART
-import os
+import os,joblib, csv
 os.environ["PYTHONWARNINGS"] = "ignore"
 import warnings
 from sklearn.exceptions import ConvergenceWarning
@@ -13,7 +13,7 @@ warnings.filterwarnings(
 # Ignore all ConvergenceWarnings from IterativeImputer.
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 # import sys
-# sys.path.append('/.../miniconda3/lib/python3.10/site-packages')
+# sys.path.append('/scratch/mchen/miniconda3/lib/python3.10/site-packages')
 import re
 import os
 import time
@@ -88,20 +88,66 @@ def remove_substrings(df, remove_in_cells=False):
         df.replace({r'\+AF8': '', r'\+AC0': ''}, regex=True, inplace=True)
 
     return df
-# --- Read and process data (unchanged) ---
-x_path = '/.../EMBARC/data/06_BART_regression/Input/x/Site_normalization/Tier1/Tier1_selected_ses-1_PLA.csv'
-y_path = '/.../EMBARC/data/10_ASL/ASL_data/y/y_seperated/response/deltaHAMD_ses_2_PLA.csv'
-output_path = '/.../EMBARC/data/10_ASL/Output/Response/05_ses-2_PLA'
-if not os.path.exists(output_path):
-    os.makedirs(output_path)
-    print(f"Created directory: {output_path}")
-else:
-    print(f"Directory already exists: {output_path}")
 
-medication = 'PLA' # SER or PLA
-ses_number = 'ses-2' # ses-1 or ses-2
-tier = 'Tier1/2' #Tier1/2 or Tier3
-feature_number = 14 # 14 or 1302 or 413 or 324
+def get_config(i: int,
+               j: int,
+               base_x_dir="/data/projects/EMBARC/data/06_BART_regression/Input/x",
+               base_y_dir="/data/projects/EMBARC/data/06_BART_regression/Input/y/Imputation/classification/Remission",
+               base_out_dir="/data/projects/EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b",
+               x_subpath="Site_normalization/Tier2b",
+               y_prefix="deltaHAMD",
+               out_suffix="save_feature_and_model",
+               tier_label="Tier2b"):
+    """
+    i mapping:
+      1 -> ses-1 SER
+      2 -> ses-1 PLA
+      3 -> ses-2 SER
+      4 -> ses-2 PLA
+
+    j controls the output folder prefix:
+      e.g., j=1  -> "01_..."
+            j=11 -> "11_..."
+    """
+    mapping = {
+        1: ("ses-1", "SER"),
+        2: ("ses-1", "PLA"),
+        3: ("ses-2", "SER"),
+        4: ("ses-2", "PLA"),
+    }
+    if i not in mapping:
+        raise ValueError("i must be 1, 2, 3, or 4.")
+
+    ses_number, medication = mapping[i]
+
+    # X filename like: Tier1_selected_ses-1_SER.csv
+    x_filename = f"{tier_label}_selected_{ses_number}_{medication}.csv"
+    x_path = os.path.join(base_x_dir, x_subpath, x_filename)
+
+    # Y filename like: deltaHAMD_ses_1_SER.csv  (ses_1 not ses-1)
+    ses_for_y = ses_number.replace("ses-", "ses_")
+    y_filename = f"{y_prefix}_{ses_for_y}_{medication}.csv"
+    y_path = os.path.join(base_y_dir, y_filename)
+
+    # Output folder like: 11_ses-1_SER_save_feature_and_model
+    out_folder = f"{int(j):02d}_{ses_number}_{medication}_{out_suffix}"
+    output_path = os.path.join(base_out_dir, out_folder)
+    os.makedirs(output_path, exist_ok=True)
+
+    return x_path, y_path, output_path, medication, ses_number
+
+i = 4
+j = 8
+x_path, y_path, output_path, medication, ses_number = get_config(i, j)
+
+print("x_path:", x_path)
+print("y_path:", y_path)
+print("output_path:", output_path)
+print("medication:", medication)
+print("ses_number:", ses_number)
+
+
+feature_number = 413 # model A: 14; model B: 1302; model C: 413; ablation: 0
 random_seed = 42
 np.random.seed(random_seed)
 random.seed(random_seed)
@@ -128,52 +174,22 @@ y_df = remove_substrings(y_df, remove_in_cells=True)
 y = y_df.to_numpy(dtype=np.float64)
 print("y shape:", y.shape)  # Expected (93,)
 
-# def filter_medication(X, y, medication='PLA'):
-#     X_filtered = X.copy()
-#     # Ensure Medication column is numeric for comparison
-#     X_filtered["Medication"] = pd.to_numeric(X_filtered["Medication"], errors="coerce")
-#
-#     if medication == "PLA":
-#         mask = X_filtered["Medication"] == 0
-#     elif medication == "SER":
-#         mask = X_filtered["Medication"] == 1
-#     else:
-#         mask = np.ones(len(X_filtered), dtype=bool)
-#
-#     X_filtered = X_filtered[mask]
-#
-#     # Filter y using the same mask
-#     if hasattr(y, "loc"):
-#         y_filtered = y.loc[X_filtered.index]
-#     else:
-#         y_filtered = y[mask.values]
-#
-#     return X_filtered, y_filtered
-# # Apply the filtering before CV:
-# X, y = filter_medication(X, y, medication= medication)
+
 
 n_samples = X.shape[0]
 n_features = X.shape[1]
 print('After filtering by medication: n_samples:', n_samples, '; n_features:', n_features, '\n')
 
 #######################################################################################################################
-# Tier 1 XGBoost session 1
-###############################################################################
-# Example utility functions and data loading omitted for brevity...
-# Assume you have X, y loaded similarly to your existing code.
-###############################################################################
 class CustomImputer(BaseEstimator, TransformerMixin):
     """
     Custom transformer that:
       1. Imputes BMI by median
       2. Imputes is_employed by most frequent
       3. IterativeImputer for MASQ w0/w1 columns (aa/ad/gd)
-      4. IterativeImputer for w1_score_17 (using w0, w2, w3, w4, w6, w8, w9, w10, w12, w16)
+      4. IterativeImputer for w1_score_17 (using w0, w2, w3, w4, w6)
       5. Creates r1_score_17 = w1_score_17 / w0_score_17
       6. IterativeImputer for shaps_total_continuous-w0/w1
-      7. KNNImputer for Hippocampus, Default-mode, and ACC columns,
-         each in separate KNN models, but only for the specified session
-         ('ses-1' or 'ses-2').
     """
 
     def __init__(self, session='ses-1', n_neighbors=5, random_state=0):
@@ -202,7 +218,7 @@ class CustomImputer(BaseEstimator, TransformerMixin):
         # --------------------------------------
         self.w1_cols_ = [
             "w0-score-17", "w1-score-17", "w2-score-17", "w3-score-17",
-            "w4-score-17", "w6-score-17",
+            "w4-score-17", "w6-score-17"
         ]
         self.w1_iter_ = IterativeImputer(random_state=self.random_state)
 
@@ -215,43 +231,6 @@ class CustomImputer(BaseEstimator, TransformerMixin):
         ]
         self.shaps_w1_iter_ = IterativeImputer(random_state=self.random_state)
 
-        # --------------------------------------
-        # 7) KNN for HPC/DM/ACC (ses-1)
-        # --------------------------------------
-        self.hpc1_cols_ = [
-            "ses-1-Left-Hippocampus-original-shape-VoxelVolume",
-            "ses-1-Right-Hippocampus-original-shape-VoxelVolume"
-        ]
-        self.dm1_cols_ = [
-            "default-mode-ses-1-mean",
-            "default-mode-ses-1-std"
-        ]
-        self.acc1_cols_ = [
-            "roi-Anterior-Cingulate-ses-1-mean",
-            "roi-Anterior-Cingulate-ses-1-std"
-        ]
-        self.hpc1_knn_ = KNNImputer(n_neighbors=self.n_neighbors)
-        self.dm1_knn_ = KNNImputer(n_neighbors=self.n_neighbors)
-        self.acc1_knn_ = KNNImputer(n_neighbors=self.n_neighbors)
-
-        # --------------------------------------
-        # 7) KNN for HPC/DM/ACC (ses-2)
-        # --------------------------------------
-        self.hpc2_cols_ = [
-            "ses-2-Left-Hippocampus-original-shape-VoxelVolume",
-            "ses-2-Right-Hippocampus-original-shape-VoxelVolume"
-        ]
-        self.dm2_cols_ = [
-            "default-mode-ses-2-mean",
-            "default-mode-ses-2-std"
-        ]
-        self.acc2_cols_ = [
-            "roi-Anterior-Cingulate-ses-2-mean",
-            "roi-Anterior-Cingulate-ses-2-std"
-        ]
-        self.hpc2_knn_ = KNNImputer(n_neighbors=self.n_neighbors)
-        self.dm2_knn_ = KNNImputer(n_neighbors=self.n_neighbors)
-        self.acc2_knn_ = KNNImputer(n_neighbors=self.n_neighbors)
 
     def _convert_numeric(self, df):
         """
@@ -267,16 +246,6 @@ class CustomImputer(BaseEstimator, TransformerMixin):
         numeric_cols.update([c for c in self.w1_cols_ if c in df.columns])
         # shaps columns
         numeric_cols.update([c for c in self.shaps_w1_cols_ if c in df.columns])
-        # HPC/DM/ACC based on session
-        if self.session == 'ses-1':
-            numeric_cols.update([c for c in self.hpc1_cols_ if c in df.columns])
-            numeric_cols.update([c for c in self.dm1_cols_ if c in df.columns])
-            numeric_cols.update([c for c in self.acc1_cols_ if c in df.columns])
-        elif self.session == 'ses-2':
-            numeric_cols.update([c for c in self.hpc2_cols_ if c in df.columns])
-            numeric_cols.update([c for c in self.dm2_cols_ if c in df.columns])
-            numeric_cols.update([c for c in self.acc2_cols_ if c in df.columns])
-
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         return df
@@ -319,42 +288,6 @@ class CustomImputer(BaseEstimator, TransformerMixin):
         shaps_exist = [c for c in self.shaps_w1_cols_ if c in X_fit.columns]
         if len(shaps_exist) == len(self.shaps_w1_cols_):
             self.shaps_w1_iter_.fit(X_fit[shaps_exist])
-
-        # --------------------------------------
-        # 7) Fit HPC/DM/ACC KNN based on session
-        # --------------------------------------
-        if self.session == 'ses-1':
-            # HPC
-            hpc1_exist = [c for c in self.hpc1_cols_ if c in X_fit.columns]
-            if len(hpc1_exist) == len(self.hpc1_cols_):
-                self.hpc1_knn_.fit(X_fit[hpc1_exist])
-
-            # DM
-            dm1_exist = [c for c in self.dm1_cols_ if c in X_fit.columns]
-            if len(dm1_exist) == len(self.dm1_cols_):
-                self.dm1_knn_.fit(X_fit[dm1_exist])
-
-            # ACC
-            acc1_exist = [c for c in self.acc1_cols_ if c in X_fit.columns]
-            if len(acc1_exist) == len(self.acc1_cols_):
-                self.acc1_knn_.fit(X_fit[acc1_exist])
-
-        elif self.session == 'ses-2':
-            # HPC
-            hpc2_exist = [c for c in self.hpc2_cols_ if c in X_fit.columns]
-            if len(hpc2_exist) == len(self.hpc2_cols_):
-                self.hpc2_knn_.fit(X_fit[hpc2_exist])
-
-            # DM
-            dm2_exist = [c for c in self.dm2_cols_ if c in X_fit.columns]
-            if len(dm2_exist) == len(self.dm2_cols_):
-                self.dm2_knn_.fit(X_fit[dm2_exist])
-
-            # ACC
-            acc2_exist = [c for c in self.acc2_cols_ if c in X_fit.columns]
-            if len(acc2_exist) == len(self.acc2_cols_):
-                self.acc2_knn_.fit(X_fit[acc2_exist])
-
         return self
 
     def transform(self, X, y=None):
@@ -406,127 +339,21 @@ class CustomImputer(BaseEstimator, TransformerMixin):
         if len(shaps_exist) == len(self.shaps_w1_cols_):
             X_out[shaps_exist] = self.shaps_w1_iter_.transform(X_out[shaps_exist])
 
-        # --------------------------------------
-        # 7) KNN HPC/DM/ACC based on session
-        # --------------------------------------
-        if self.session == 'ses-1':
-            # HPC
-            hpc1_exist = [c for c in self.hpc1_cols_ if c in X_out.columns]
-            if len(hpc1_exist) == len(self.hpc1_cols_):
-                X_out[hpc1_exist] = self.hpc1_knn_.transform(X_out[hpc1_exist])
-
-            # DM
-            dm1_exist = [c for c in self.dm1_cols_ if c in X_out.columns]
-            if len(dm1_exist) == len(self.dm1_cols_):
-                X_out[dm1_exist] = self.dm1_knn_.transform(X_out[dm1_exist])
-
-            # ACC
-            acc1_exist = [c for c in self.acc1_cols_ if c in X_out.columns]
-            if len(acc1_exist) == len(self.acc1_cols_):
-                X_out[acc1_exist] = self.acc1_knn_.transform(X_out[acc1_exist])
-
-        elif self.session == 'ses-2':
-            # HPC
-            hpc2_exist = [c for c in self.hpc2_cols_ if c in X_out.columns]
-            if len(hpc2_exist) == len(self.hpc2_cols_):
-                X_out[hpc2_exist] = self.hpc2_knn_.transform(X_out[hpc2_exist])
-
-            # DM
-            dm2_exist = [c for c in self.dm2_cols_ if c in X_out.columns]
-            if len(dm2_exist) == len(self.dm2_cols_):
-                X_out[dm2_exist] = self.dm2_knn_.transform(X_out[dm2_exist])
-
-            # ACC
-            acc2_exist = [c for c in self.acc2_cols_ if c in X_out.columns]
-            if len(acc2_exist) == len(self.acc2_cols_):
-                X_out[acc2_exist] = self.acc2_knn_.transform(X_out[acc2_exist])
-
         return X_out
 
-# class MedicationFilter(BaseEstimator, TransformerMixin):
-#     """
-#     Filters rows in the DataFrame based on the 'Medication' column.
-#     If medication='PLA', keep rows where Medication == 0.
-#     If medication='SER', keep rows where Medication == 1.
-#     Also filters y accordingly if provided.
-#     """
-#
-#     def __init__(self, medication='PLA'):
-#         """
-#         Parameters
-#         ----------
-#         medication : str, default='PLA'
-#             Indicates which subjects to keep.
-#             - 'PLA' => Medication == 0
-#             - 'SER' => Medication == 1
-#         """
-#         self.medication = medication
-#
-#     def fit(self, X, y=None):
-#         return self
-#
-#     def transform(self, X, y=None):
-#         X = X.copy()
-#         if "Medication" in X.columns:
-#             # Convert to numeric so that '0' becomes 0 and '1' becomes 1
-#             X["Medication"] = pd.to_numeric(X["Medication"], errors="coerce")
-#             if self.medication == "PLA":
-#                 mask = X["Medication"] == 0
-#             elif self.medication == "SER":
-#                 mask = X["Medication"] == 1
-#             else:
-#                 # If medication is not 'PLA' or 'SER', keep all rows.
-#                 mask = np.ones(len(X), dtype=bool)
-#             X = X[mask]
-#             if y is not None:
-#                 # If y is a pandas Series or DataFrame, use its index to filter.
-#                 if hasattr(y, "loc"):
-#                     y = y.loc[X.index]
-#                 else:
-#                     # Otherwise, assume y is a numpy array aligned with X.
-#                     y = y[mask.values]
-#                 return X, y
-#         if y is not None:
-#             return X, y
-#         return X
 
 class DropColumns(BaseEstimator, TransformerMixin):
-    def __init__(self, session='ses-1', tier='Tier1/2', cols_to_drop_1=None, cols_to_drop_2=None):
+    def __init__(self, session='ses-1', cols_to_drop_1=None, cols_to_drop_2=None):
         self.session = session
-        self.tier = tier
         self.cols_to_drop_1 = cols_to_drop_1 or []
         self.cols_to_drop_2 = cols_to_drop_2 or []
-        # HPC/DM/ACC columns for ses-1
-        self.additional_ses1 = [
-            'ses-1-Left-Hippocampus-original-shape-VoxelVolume',
-            'ses-1-Right-Hippocampus-original-shape-VoxelVolume',
-            'default-mode-ses-1-mean',
-            'default-mode-ses-1-std',
-            'roi-Anterior-Cingulate-ses-1-mean',
-            'roi-Anterior-Cingulate-ses-1-std'
-        ]
-        # HPC/DM/ACC columns for ses-2
-        self.additional_ses2 = [
-            "ses-2-Left-Hippocampus-original-shape-VoxelVolume",
-            "ses-2-Right-Hippocampus-original-shape-VoxelVolume",
-            "default-mode-ses-2-mean",
-            "default-mode-ses-2-std",
-            "roi-Anterior-Cingulate-ses-2-mean",
-            "roi-Anterior-Cingulate-ses-2-std"
-        ]
         # This will hold the final columns we decide to drop
         self.cols_to_drop_ = None
 
     def fit(self, X, y=None):
         if self.session == 'ses-1':
-            if self.tier == 'Tier1/2':
-                self.cols_to_drop_ = self.cols_to_drop_1 + self.additional_ses1
-            else:  # tier == 'Tier3'
                 self.cols_to_drop_ = self.cols_to_drop_1
         else:  # session == 'ses-2'
-            if self.tier == 'Tier1/2':
-                self.cols_to_drop_ = self.cols_to_drop_2 + self.additional_ses2
-            else:  # tier == 'Tier3'
                 self.cols_to_drop_ = self.cols_to_drop_2
         return self
 
@@ -534,88 +361,147 @@ class DropColumns(BaseEstimator, TransformerMixin):
         X_copy = X.copy()
         return X_copy.drop(columns=self.cols_to_drop_, errors='ignore')
 
-
------------------- CustomCombatTransformer ------------------
 class NeuroHarmonizeTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self, feature_number):
-        """
-        Parameters:
-            feature_number (int): The number of radiomics features (starting from column 0)
-                                  that will be harmonized.
-        """
-        self.feature_number = feature_number
+    def __init__(
+        self,
+        feature_number: int,
+        covariate_cols=("Site", "Age", "Age-squared", "Gender"),
+        skip_combat: bool = False,
+        enforce_train_column_order: bool = True,
+    ):
+        self.feature_number = int(feature_number)
+        self.covariate_cols = tuple(covariate_cols)
+        self.skip_combat = bool(skip_combat)
+        self.enforce_train_column_order = bool(enforce_train_column_order)
+
         self.model_ = None
+        self.feature_cols_ = None
+        self.covariate_cols_resolved_ = None
+
+    @staticmethod
+    def _resolve_columns_case_insensitive(df_cols, wanted):
+        """Return a list of actual column names in df that match `wanted` case-insensitively."""
+        lower_map = {c.lower(): c for c in df_cols}
+        resolved = profiler = []
+        resolved = []
+        for w in wanted:
+            key = w.lower()
+            if key in lower_map:
+                resolved.append(lower_map[key])
+            else:
+                resolved.append(None)
+        return resolved
+
+    def _build_covariates(self, X: pd.DataFrame) -> pd.DataFrame:
+        # resolve covariate column names robustly (case-insensitive)
+        resolved = self._resolve_columns_case_insensitive(X.columns, self.covariate_cols)
+        missing = [w for w, r in zip(self.covariate_cols, resolved) if r is None]
+        if missing:
+            raise ValueError(
+                f"NeuroHarmonizeTransformer: missing covariate columns {missing}. "
+                f"Available columns include: {list(X.columns)[:20]} ..."
+            )
+        cov = X.loc[:, resolved].copy()
+
+        # standardize covariate names expected by neuroHarmonize
+        rename_map = {}
+        for orig, want in zip(resolved, self.covariate_cols):
+            wl = want.lower()
+            if wl == "site":
+                rename_map[orig] = "SITE"
+            elif wl == "age":
+                rename_map[orig] = "age"
+            elif wl in ("age-squared", "age_squared", "agesquared"):
+                rename_map[orig] = "age_squared"
+            elif wl == "gender":
+                rename_map[orig] = "gender"
+            else:
+                rename_map[orig] = want  # fallback
+        cov.rename(columns=rename_map, inplace=True)
+
+        # enforce types
+        cov["SITE"] = cov["SITE"].astype(str)
+        for c in ["age", "age_squared", "gender"]:
+            if c in cov.columns:
+                cov[c] = pd.to_numeric(cov[c], errors="coerce")
+
+        return cov
 
     def fit(self, X, y=None):
-        """
-        Learns the harmonization model using the radiomics features and covariates.
+        if not hasattr(X, "columns"):
+            raise TypeError("NeuroHarmonizeTransformer expects a pandas DataFrame as X (so it can find covariates by name).")
 
-        Parameters:
-            X (pandas.DataFrame): Input dataframe with feature columns and the last 4 covariate columns.
-            y: Ignored.
+        # Optionally lock feature column order from training set
+        cov_resolved = self._resolve_columns_case_insensitive(X.columns, self.covariate_cols)
+        self.covariate_cols_resolved_ = [c for c in cov_resolved if c is not None]
+        self.feature_cols_ = [c for c in X.columns if c not in self.covariate_cols_resolved_]
 
-        Returns:
-            self
-        """
-        # --- Step 1: Prepare the covariate DataFrame ---
-        covariate_df = X.iloc[:, -4:].copy()
-        covariate_df.columns = ['SITE', 'age', 'age_squared', 'gender']
-        covariate_df['SITE'] = covariate_df['SITE'].astype(str)
-        covariate_df['age'] = pd.to_numeric(covariate_df['age'], errors='coerce')
-        covariate_df['age_squared'] = pd.to_numeric(covariate_df['age_squared'], errors='coerce')
-        covariate_df['gender'] = pd.to_numeric(covariate_df['gender'], errors='coerce')
+        # Skip ComBat entirely if requested or feature_number <= 0
+        if self.skip_combat or self.feature_number <= 0:
+            self.model_ = None
+            return self
 
-        # --- Step 2: Convert the feature columns (all but the last 4) to a numpy array ---
-        data_array = X.iloc[:, :-4].to_numpy(dtype=np.float64)
+        covariate_df = self._build_covariates(X)
 
-        # --- Step 3: Split the features into radiomics and clinical parts ---
-        radiomics = data_array[:, :self.feature_number]
-        # clinical part is not used during learning but will be preserved during transform
-        # clinical = data_array[:, self.feature_number:]
+        # Convert features (excluding covariates) to numeric array
+        feat_df = X.loc[:, self.feature_cols_].copy()
+        feat_df = feat_df.apply(pd.to_numeric, errors="coerce")
+        data = feat_df.to_numpy(dtype=np.float64)
 
-        # --- Step 4: Learn the harmonization model on the radiomics features ---
+        k = min(self.feature_number, data.shape[1])
+        if k <= 0:
+            self.model_ = None
+            return self
+
+        radiomics = data[:, :k]
         model_out = harmonizationLearn(radiomics, covars=covariate_df)
-        # In case harmonizationLearn returns a tuple, use the first element as the model
         self.model_ = model_out[0] if isinstance(model_out, tuple) else model_out
-
         return self
 
     def transform(self, X):
-        """
-        Applies the learned harmonization model to the radiomics features and
-        concatenates them with the clinical features.
+        if not hasattr(X, "columns"):
+            raise TypeError("NeuroHarmonizeTransformer expects a pandas DataFrame as X.")
 
-        Parameters:
-            X (pandas.DataFrame): Input dataframe with feature columns and the last 4 covariate columns.
+        # Reorder columns to match training (prevents train/test column-order drift)
+        if self.enforce_train_column_order and self.feature_cols_ is not None and self.covariate_cols_resolved_ is not None:
+            needed = self.feature_cols_ + self.covariate_cols_resolved_
+            missing = [c for c in needed if c not in X.columns]
+            if missing:
+                raise ValueError(
+                    f"NeuroHarmonizeTransformer: input is missing columns seen at fit(): {missing[:10]} ..."
+                )
+            X_use = X.loc[:, needed].copy()
+        else:
+            # still exclude covariates by name
+            cov_resolved = self._resolve_columns_case_insensitive(X.columns, self.covariate_cols)
+            cov_resolved = [c for c in cov_resolved if c is not None]
+            feat_cols = [c for c in X.columns if c not in cov_resolved]
+            X_use = X.loc[:, feat_cols + cov_resolved].copy()
+            self.feature_cols_ = feat_cols
+            self.covariate_cols_resolved_ = cov_resolved
 
-        Returns:
-            merged_data (numpy.ndarray): The transformed array where harmonized radiomics features
-                                         are merged with the intact clinical features.
-        """
-        # --- Step 1: Prepare the covariate DataFrame ---
-        covariate_df = X.iloc[:, -4:].copy()
-        covariate_df.columns = ['SITE', 'age', 'age_squared', 'gender']
-        covariate_df['SITE'] = covariate_df['SITE'].astype(str)
-        covariate_df['age'] = pd.to_numeric(covariate_df['age'], errors='coerce')
-        covariate_df['age_squared'] = pd.to_numeric(covariate_df['age_squared'], errors='coerce')
-        covariate_df['gender'] = pd.to_numeric(covariate_df['gender'], errors='coerce')
+        # Build covariates by NAME
+        covariate_df = self._build_covariates(X_use)
 
-        # --- Step 2: Convert the feature columns (all but the last 4) to a numpy array ---
-        data_array = X.iloc[:, :-4].to_numpy(dtype=np.float64)
+        # Features (excluding covariates)
+        feat_df = X_use.loc[:, self.feature_cols_].copy()
+        feat_df = feat_df.apply(pd.to_numeric, errors="coerce")
+        data = feat_df.to_numpy(dtype=np.float64)
 
-        # --- Step 3: Split the features into radiomics and clinical parts ---
-        radiomics = data_array[:, :self.feature_number]
-        clinical = data_array[:, self.feature_number:]
+        # If skipping, just return features (radiomics+clinical) unchanged (covars excluded)
+        k = min(self.feature_number, data.shape[1])
+        if self.skip_combat or self.model_ is None or k <= 0:
+            return data
 
-        # --- Step 4: Apply the learned harmonization model to the radiomics features ---
-        harmonized_radiomics = harmonizationApply(radiomics, covars=covariate_df, model=self.model_)
+        radiomics = data[:, :k]
+        clinical = data[:, k:]
 
-        # --- Step 5: Merge the harmonized radiomics features with the clinical features ---
-        merged_data = np.hstack([harmonized_radiomics, clinical])
+        harmonized = harmonizationApply(radiomics, covars=covariate_df, model=self.model_)
+        if isinstance(harmonized, tuple):
+            harmonized = harmonized[0]
 
-        return merged_data
+        return np.hstack([harmonized, clinical]).astype(np.float64)
 
-# ------------------ Custom Feature Selector ------------------
 class CustomFeatureSelector(BaseEstimator, TransformerMixin):
     def __init__(self, estimator, n_features_to_select= selected_features, corr_th=0.8):
         self.estimator = estimator
@@ -677,7 +563,14 @@ class CustomFeatureSelector(BaseEstimator, TransformerMixin):
 
 # ------------------ Build the Pipeline with XGBoost ------------------
 
-ComBat_transformer = NeuroHarmonizeTransformer(feature_number=feature_number)
+ComBat_transformer = NeuroHarmonizeTransformer(
+    feature_number=feature_number,
+    covariate_cols=("Site", "Age", "Age-squared", "Gender"),
+    skip_combat=False,  # <-- set to True to skip ComBat and just pass through features (but still require covariates for consistent column handling)
+    enforce_train_column_order=True,
+)
+
+
 
 # Base XGBoost estimator for RFE
 selector_estimator = XGBRegressor(random_state=random_seed, eval_metric='rmse')
@@ -691,48 +584,6 @@ cols_to_drop_1 = ['subject-id','Medication','w1-score-17','r1-score-17',\
 # ses-2
 cols_to_drop_2 = ['subject-id','Medication', 'w2-score-17','w3-score-17','w4-score-17','w6-score-17',\
                   'w8-score-17','w9-score-17', 'w10-score-17','w12-score-17','w16-score-17']
-
-
-
-
-# # # Checking for each step's shape
-# pipeline1 = pipeline.fit(X,y)
-# X1 = pipeline.steps[0][1].fit_transform(X_train)
-# print("X shape in step 1: ", X1.shape)
-# X2 = pipeline.steps[1][1].fit_transform(X1)
-# print("X shape in step 2: ", X2.shape)
-# print(repr(X2.columns))
-# X3 = pipeline.steps[2][1].fit_transform(X2)
-# print("X shape in step 3: ", X3.shape)
-# X4 = pipeline.steps[3][1].fit_transform(X3)
-# print("X shape in step 4: ", X4.shape)
-# X5 = pipeline.steps[4][1].fit_transform(X4)
-# print("X shape in step 5: ", X5.shape)
-# # X6 = pipeline.steps[5][1].transform(X5)
-# # print("X shape in step 6: ", X6.shape)
-#
-# # Convert the array to a DataFrame. Optionally, specify column names.
-# df = pd.DataFrame(X4.T)
-#
-# # Save the DataFrame to a CSV file without the index.
-# df.to_csv("X4.csv", index=False)
-
-# class NaNChecker(BaseEstimator, TransformerMixin):
-#     def __init__(self, name=""):
-#         self.name = name
-#
-#     def fit(self, X, y=None):
-#         self._check(X, "fit")
-#         return self
-#
-#     def transform(self, X):
-#         self._check(X, "transform")
-#         return X
-#
-#     def _check(self, X, stage):
-#         arr = X.values if hasattr(X, "values") else X
-#         mask = np.isnan(arr)
-#         print(f"[{self.name} / {stage}] NaNs?", mask.any(), " count=", mask.sum())
 
 # ------------------ Hyperparameter Search Space ------------------
 # Example hyperparams to tune in both the selector's XGBoost and the final XGBoost
@@ -763,6 +614,36 @@ cv_inner = StratifiedKFold(n_splits=10, shuffle=True, random_state=random_seed)
 
 # ------------------ Outer CV Loop ------------------
 cv_outer = StratifiedKFold(n_splits=10, shuffle=True, random_state=random_seed)
+
+
+# Choose which feature name list to use in the CSV:
+NAME_LIST = feature_names
+
+long_csv_path = os.path.join(output_path, "selected_features_shap_long.csv")
+
+# Write header once
+csv_f = open(long_csv_path, "w", newline="", encoding="utf-8")
+writer = csv.writer(csv_f)
+writer.writerow([
+    "fold",
+    "split",
+    "sample_in_fold",
+    "global_row_id",          # optional: stable id within this CSV
+    "feature_rank_in_fold",   # j in selected-feature space
+    "feature_index",          # index in full feature space
+    "feature_name",
+    "shap_value",
+    "x_value",
+])
+
+global_row_id = 0
+
+# Collect per-fold metadata to save as npy at end
+fold_ids = []
+selected_indices_per_fold = []
+selected_feature_names_per_fold = []
+train_indices_per_fold = []   # optional but very useful
+test_indices_per_fold = []    # optional but very useful
 
 y_pred_list = []
 y_true_list = []
@@ -808,24 +689,18 @@ for train_index, test_index in cv_outer.split(X, y):
     pipeline = Pipeline([
         # Step 1: Impute the entire clinical_df (294 subjects)
         ("impute_clinical", CustomImputer(session=ses_number)),
-        # Step 2: Filter medication=1 or 0, depending on medication='SER' or 'PLA'
-        # ("med_filter", MedicationFilter(medication=medication)),
-        # Step 3: Drop columns (depends on session, tier, and your predefined lists)
+        # Step 2: Drop columns (depends on session,  and your predefined lists)
         ("drop_cols", DropColumns(
             session=ses_number,
-            tier=tier,
             cols_to_drop_1=cols_to_drop_1,
             cols_to_drop_2=cols_to_drop_2
         )),
-        # Step 4: NeuroCombat with covariates
+        # Step 3: NeuroCombat with covariates
         ("Combat", ComBat_transformer),  # Assuming you've already configured covariates inside
-        # Step 5: Scale
+        # Step 4: Scale
         ("scaler", RobustScaler()),
-        # --- NEW: inject a sampler to synthetically balance the minority class ---
-        # ("check_before_smote", NaNChecker(name="before_smote")),
+        # Step 5: inject a sampler to synthetically balance the minority class ---
         ("smote", SMOTE(random_state=random_seed, sampling_strategy="auto")),
-        # you can also use RandomUnderSampler, NearMiss, etc.
-
         # Step 6: Feature selection
         ("selector", CustomFeatureSelector(estimator=selector_estimator)),
         # Step 7: XGB
@@ -860,6 +735,8 @@ for train_index, test_index in cv_outer.split(X, y):
     # Evaluate on the test fold
     best_pipeline = optimizer.best_estimator_
     best_models.append(best_pipeline)
+    fold_id = outer_fold_counter  # or i, however you index folds
+    joblib.dump(best_pipeline, os.path.join(output_path, f"best_pipeline_fold{fold_id}.joblib"))
     y_pred = best_pipeline.predict(X_test)
     y_pred_list.extend(y_pred)
     y_true_list.extend(y_test)
@@ -903,6 +780,70 @@ for train_index, test_index in cv_outer.split(X, y):
     # Compute the SHAP values
     shap_values_train = explainer.shap_values(best_X_train)
     shap_values_test = explainer.shap_values(best_X_test)
+
+    # --- unwrap SHAP if it comes as a list (binary classification sometimes does this) ---
+    if isinstance(shap_values_train, list):
+        shap_values_train = shap_values_train[0]
+    if isinstance(shap_values_test, list):
+        shap_values_test = shap_values_test[0]
+
+    # Selected indices (full feature space)
+    selected_indices = best_pipeline.named_steps['selector'].selected_features_indices_
+    selected_indices = np.array(selected_indices, dtype=int)
+
+    # Selected names (same length as selected_indices)
+    selected_names = [NAME_LIST[i] for i in selected_indices]
+
+    # Save per-fold info
+    fold_ids.append(outer_fold_counter)
+    selected_indices_per_fold.append(selected_indices)
+    selected_feature_names_per_fold.append(np.array(selected_names, dtype=object))
+    train_indices_per_fold.append(np.array(train_index, dtype=int))  # mapping back to original X rows
+    test_indices_per_fold.append(np.array(test_index, dtype=int))
+
+    # Sanity checks
+    assert shap_values_train.shape == best_X_train.shape, "Train SHAP shape != Train X shape"
+    assert shap_values_test.shape == best_X_test.shape, "Test SHAP shape != Test X shape"
+    assert shap_values_train.shape[1] == len(selected_indices), "Train SHAP cols != #selected features"
+    assert shap_values_test.shape[1] == len(selected_indices), "Test SHAP cols != #selected features"
+
+    # --- stream TRAIN rows ---
+    n_train = shap_values_train.shape[0]
+    for s in range(n_train):
+        for j, (full_idx, fname) in enumerate(zip(selected_indices, selected_names)):
+            writer.writerow([
+                outer_fold_counter,
+                "train",
+                s,
+                global_row_id,
+                j,
+                int(full_idx),
+                fname,
+                float(shap_values_train[s, j]),
+                float(best_X_train[s, j]),
+            ])
+            global_row_id += 1
+
+    # --- stream TEST rows ---
+    n_test = shap_values_test.shape[0]
+    for s in range(n_test):
+        for j, (full_idx, fname) in enumerate(zip(selected_indices, selected_names)):
+            writer.writerow([
+                outer_fold_counter,
+                "test",
+                s,
+                global_row_id,
+                j,
+                int(full_idx),
+                fname,
+                float(shap_values_test[s, j]),
+                float(best_X_test[s, j]),
+            ])
+            global_row_id += 1
+
+    # (optional) flush to ensure progress is written even if job crashes later
+    csv_f.flush()
+
     # Store the SHAP values and the best X
     all_train_shap_values.append(shap_values_train)
     all_test_shap_values.append(shap_values_test)
@@ -915,6 +856,50 @@ for train_index, test_index in cv_outer.split(X, y):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] Outer fold {outer_fold_counter}/{total_outer_folds} complete. Progress: {progress:.2f}%. "
           f"Time for this fold: {elapsed_time:.2f} seconds.")
 
+
+# # Checking for each step's shape
+# pipeline1 = pipeline.fit(X,y)
+# X1 = pipeline.steps[0][1].fit_transform(X_train)
+# print("X shape in step 1: ", X1.shape)
+# X2 = pipeline.steps[1][1].fit_transform(X1)
+# print("X shape in step 2: ", X2.shape)
+# print(repr(X2.columns))
+# X3 = pipeline.steps[2][1].fit_transform(X2)
+# print("X shape in step 3: ", X3.shape)
+# X4 = pipeline.steps[3][1].fit_transform(X3)
+# print("X shape in step 4: ", X4.shape)
+# X5 = pipeline.steps[4][1].fit_transform(X4)
+# print("X shape in step 5: ", X5.shape)
+# # X6 = pipeline.steps[5][1].transform(X5)
+# # print("X shape in step 6: ", X6.shape)
+
+# Save the selected features
+csv_f.close()
+print("Saved long-format CSV:", long_csv_path)
+
+np.save(os.path.join(output_path, "fold_ids.npy"),
+        np.array(fold_ids, dtype=int))
+
+np.save(os.path.join(output_path, "selected_indices_per_fold.npy"),
+        np.array(selected_indices_per_fold, dtype=object),
+        allow_pickle=True)
+
+np.save(os.path.join(output_path, "selected_feature_names_per_fold.npy"),
+        np.array(selected_feature_names_per_fold, dtype=object),
+        allow_pickle=True)
+
+# optional but recommended
+np.save(os.path.join(output_path, "train_indices_per_fold.npy"),
+        np.array(train_indices_per_fold, dtype=object),
+        allow_pickle=True)
+
+np.save(os.path.join(output_path, "test_indices_per_fold.npy"),
+        np.array(test_indices_per_fold, dtype=object),
+        allow_pickle=True)
+
+print("Saved per-fold selected indices/names and index mappings in:", output_path)
+
+
 # Flatten into 1D arrays
 y_true_arr  = np.array(y_true_list).ravel().astype(int)
 y_pred_arr  = np.array(y_pred_list).ravel().astype(int)
@@ -925,7 +910,7 @@ n = len(y_true_arr)
 
 # -----------------  Binomial test on accuracy -----------------
 k = int((y_true_arr == y_pred_arr).sum())
-res     = binomtest(k, n, p= response_rate, alternative="greater")
+res     = binomtest(k, n, p= 0.5, alternative="greater")
 
 binom_p = res.pvalue
 prop_hat = res.proportion_estimate
@@ -1216,580 +1201,3 @@ plt.savefig(plot_file, dpi=300, bbox_inches="tight")
 plt.show()
 print(f"Scatter plot saved to: {plot_file}")
 
-#######################################################################################################################
-# Permutation test
-cv_outer = KFold(n_splits=10, shuffle=True, random_state=random_seed)
-
-# Containers for overall results
-y_pred_list = []
-y_true_list = []
-fold_r2 = []
-fold_rmse = []
-permutation_p_values_r2 = []
-permutation_p_values_rmse = []
-outer_fold_counter = 0
-total_outer_folds = cv_outer.get_n_splits()
-all_train_shap_values = []
-all_test_shap_values = []
-all_best_X_train = []
-all_best_X_test = []
-elapsed_times = []
-
-# Set the number of permutations per outer fold
-n_permutations = 50
-
-for train_index, test_index in cv_outer.split(X, y):
-    start_time = time.time()
-    outer_fold_counter += 1
-
-    X_train, X_test = X[train_index], X[test_index]
-    y_train, y_test = y[train_index], y[test_index]
-
-    # ----- Fit on the true data -----
-    optimizer.fit(X_train, y_train)
-    print(f"Fold {outer_fold_counter} - Best inner-fold score: {optimizer.best_score_:.4f}")
-    print(f"Fold {outer_fold_counter} - Best params: {optimizer.best_params_}")
-
-    best_pipeline = optimizer.best_estimator_
-    y_pred = best_pipeline.predict(X_test)
-    y_pred_list.extend(y_pred)
-    y_true_list.extend(y_test)
-
-    r2_obs = r2_score(y_test, y_pred)
-    rmse_obs = np.sqrt(mean_squared_error(y_test, y_pred))
-    fold_r2.append(r2_obs)
-    fold_rmse.append(rmse_obs)
-    print(f"Fold {outer_fold_counter} - Observed R²: {r2_obs:.4f}, RMSE: {rmse_obs:.4f}")
-
-    # ----- Permutation Test for the current outer fold -----
-    perm_r2 = []
-    perm_rmse = []
-    for perm in range(n_permutations):
-        # Shuffle y_train for permutation
-        y_train_perm = shuffle(y_train, random_state=perm)
-        # Re-fit the optimizer on permuted training labels
-        optimizer.fit(X_train, y_train_perm)
-        best_pipeline_perm = optimizer.best_estimator_
-        y_pred_perm = best_pipeline_perm.predict(X_test)
-        perm_r2.append(r2_score(y_test, y_pred_perm))
-        perm_rmse.append(np.sqrt(mean_squared_error(y_test, y_pred_perm)))
-    # Calculate empirical p-values:
-    # For R², count how many permuted scores are greater than or equal to the observed
-    p_value_r2 = np.mean(np.array(perm_r2) >= r2_obs)
-    # For RMSE, lower is better so count permuted RMSE less than or equal to observed
-    p_value_rmse = np.mean(np.array(perm_rmse) <= rmse_obs)
-    permutation_p_values_r2.append(p_value_r2)
-    permutation_p_values_rmse.append(p_value_rmse)
-    print(f"Fold {outer_fold_counter} - Permutation test p-value for R²: {p_value_r2:.4f}, RMSE: {p_value_rmse:.4f}")
-
-    # ----- SHAP Analysis for the final XGBoost -----
-    transform_pipeline = Pipeline(best_pipeline.steps[:-1])  # all steps except the final xgb
-    final_xgb = best_pipeline.named_steps['xgb']
-    explainer = shap.TreeExplainer(final_xgb)
-    best_X_train = transform_pipeline.transform(X_train)
-    best_X_test = transform_pipeline.transform(X_test)
-    shap_values_train = explainer.shap_values(best_X_train)
-    shap_values_test = explainer.shap_values(best_X_test)
-    all_train_shap_values.append(shap_values_train)
-    all_test_shap_values.append(shap_values_test)
-    all_best_X_train.append(best_X_train)
-    all_best_X_test.append(best_X_test)
-
-    elapsed_time = time.time() - start_time
-    elapsed_times.append(elapsed_time)
-    progress = outer_fold_counter / total_outer_folds * 100
-    print(f"Outer fold {outer_fold_counter}/{total_outer_folds} complete. Progress: {progress:.2f}%. "
-          f"Time for this fold: {elapsed_time:.2f} seconds.")
-
-# Print overall results
-mean_r2 = np.mean(fold_r2)
-mean_rmse = np.mean(fold_rmse)
-mean_p_value_r2 = np.mean(permutation_p_values_r2)
-mean_p_value_rmse = np.mean(permutation_p_values_rmse)
-
-print(f"\nFinal Mean R²: {mean_r2:.4f}, Mean RMSE: {mean_rmse:.4f}")
-print(f"Average permutation test p-value for R²: {mean_p_value_r2:.4f}")
-print(f"Average permutation test p-value for RMSE: {mean_p_value_rmse:.4f}")
-# ------------------ Save p-values as CSV ------------------
-# Create a DataFrame with fold-level results
-output_file = os.path.join(output_path, "p_values.csv")
-results_df = pd.DataFrame({
-    "Fold": np.arange(1, total_outer_folds + 1),
-    "Observed_R2": fold_r2,
-    "Observed_RMSE": fold_rmse,
-    "Permutation_p_value_R2": permutation_p_values_r2,
-    "Permutation_p_value_RMSE": permutation_p_values_rmse
-})
-results_df.to_csv(output_file, index=False)
-print(f"P-values and fold results saved to {output_file}")
-########################################################################################################################
-# Binomial test
-import os
-import numpy as np
-from scipy.stats import binomtest
-# Base directory containing the four folders
-base_dir = "/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Response/Tier0_ablation/Clinical_variables"
-
-# List of subfolders to iterate over
-folders = [
-    "01_ses-1_SER",
-    "02_ses-1_PLA",
-    "03_ses-2_SER",
-    "04_ses-2_PLA"
-]
-
-for folder in folders:
-    folder_path = os.path.join(base_dir, folder)
-    y_true_path = os.path.join(folder_path, "y_true_list.npy")
-    y_pred_path = os.path.join(folder_path, "y_pred_list.npy")
-
-    # Load and preprocess
-    y_true_arr = np.load(y_true_path).squeeze()
-    y_pred_arr = np.load(y_pred_path)
-    assert y_true_arr.shape == y_pred_arr.shape, f"Mismatch in {folder}: true vs pred lengths"
-
-    # Compute baseline response rate from y_true
-    n = len(y_true_arr)
-    response_rate = np.mean(y_true_arr)  # assumes y_true_arr is 0/1 or boolean
-
-    # Count correct predictions
-    k = int((y_true_arr == y_pred_arr).sum())
-
-    # Run binomial test (H₁: accuracy > response_rate)
-    res = binomtest(k=k, n=n, p=response_rate, alternative="greater")
-    binom_p = res.pvalue
-    prop_hat = res.proportion_estimate
-
-    # Print summary for this folder
-    print(f"--- Results for {folder} ---")
-    print(f"  Response rate (p₀)       = {response_rate:.3f}")
-    print(f"  Accuracy                 = {k}/{n} = {k / n:.3f}")
-    print(f"  Estimated p̂             = {prop_hat:.3f}")
-    print(f"  Binomial p-value (one-sided) = {binom_p:.4f}\n")
-#########################################################################################################################
-# Compare among groups
-# McNemar's test
-import numpy as np
-from statsmodels.stats.contingency_tables import mcnemar
-
-# 1) Load your arrays (replace filenames as needed)
-y_true   = np.load("/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier1/04_ses-2_PLA/y_true_list.npy")        # shape (n_samples,)
-pred1    = np.load("/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier1/04_ses-2_PLA/y_pred_list.npy")    # Tier 1 predictions
-pred2    = np.load("/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2a/04_ses-2_PLA/y_pred_list.npy")    # Tier 2 predictions
-pred3    = np.load("/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b/04_ses-2_PLA/y_pred_list.npy")    # Tier 3 predictions
-
-# 2) Flatten y_true if it has an extra dimension
-y_true = y_true.squeeze()   # now shape (n,)
-
-# 3) Simple check
-assert y_true.ndim == 1,    "y_true must be 1D"
-# simple check
-assert y_true.shape == pred1.shape == pred2.shape == pred3.shape, \
-       "All arrays must have the same shape!"
-
-def compare_mcnemar(y_true, y_a, y_b, name_a, name_b):
-    """
-    Run McNemar's test comparing model A vs model B on the same y_true.
-    b = # (A correct, B wrong)
-    c = # (A wrong,   B correct)
-    """
-    b = np.sum((y_a == y_true) & (y_b != y_true))
-    c = np.sum((y_a != y_true) & (y_b == y_true))
-    table = [[0, b],
-             [c, 0]]
-    result = mcnemar(table, exact=False, correction=True)
-
-    print(f"=== {name_a} vs {name_b} ===")
-    print(f" A correct & B wrong (b): {b}")
-    print(f" A wrong   & B correct (c): {c}")
-    print(f" McNemar’s χ² = {result.statistic:.2f}, p = {result.pvalue:.4f}\n")
-
-# 2) Run all three pairwise comparisons
-compare_mcnemar(y_true, pred1, pred2, "Tier 1", "Tier 2")
-compare_mcnemar(y_true, pred2, pred3, "Tier 2", "Tier 3")
-compare_mcnemar(y_true, pred1, pred3, "Tier 1", "Tier 3")
-
-#########################################################
-import numpy as np
-import random
-from sklearn.metrics import r2_score
-from scipy.stats import ttest_rel
-# Set random seed for reproducibility
-np.random.seed(42)
-random.seed(42)
-
-# ------------------ Load Sertraline Group Data (Session 1) ------------------
-ser_y_pred = np.load(
-    '/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b/03_ses-2_SER/y_pred_list.npy',
-    allow_pickle=True
-)
-ser_y_true = np.load(
-    '/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b/03_ses-2_SER/y_true_list.npy',
-    allow_pickle=True
-)
-
-# ------------------ Load Placebo Group Data (Session 1) ------------------
-pla_y_pred = np.load(
-    '/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b/04_ses-2_PLA/y_pred_list.npy',
-    allow_pickle=True
-)
-pla_y_true = np.load(
-    '/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b/04_ses-2_PLA/y_true_list.npy',
-    allow_pickle=True
-)
-
-print("Data loaded successfully.")
-
-
-# Compute Pearson's correlation coefficient
-pearson_corr, p_value_Pearson = pearsonr(np.ravel(ser_y_true), np.ravel(ser_y_pred))
-print("Pearson correlation coefficient:", pearson_corr)
-print("p-value:", p_value_Pearson)
-
-# --- Compute observed AUC-ROC and confusion matrices for each group ---
-# Sertraline
-observed_auc_ser = roc_auc_score(ser_y_true, ser_y_pred)
-# If you want a confusion matrix, you need hard labels—choose a threshold, e.g. 0.5:
-ser_y_pred_label = (ser_y_pred >= 0.5).astype(int)
-cm_ser = confusion_matrix(ser_y_true, ser_y_pred_label)
-report_ser = classification_report(ser_y_true, ser_y_pred_label)
-
-# Placebo
-observed_auc_pla = roc_auc_score(pla_y_true, pla_y_pred)
-pla_y_pred_label = (pla_y_pred >= 0.5).astype(int)
-cm_pla = confusion_matrix(pla_y_true, pla_y_pred_label)
-report_pla = classification_report(pla_y_true, pla_y_pred_label)
-
-observed_diff = observed_auc_ser - observed_auc_pla
-
-print("=== Sertraline Group ===")
-print(f"AUC-ROC: {observed_auc_ser:.3f}")
-print("Confusion Matrix:\n", cm_ser)
-print("Classification Report:\n", report_ser)
-
-print("\n=== Placebo Group ===")
-print(f"AUC-ROC: {observed_auc_pla:.3f}")
-print("Confusion Matrix:\n", cm_pla)
-print("Classification Report:\n", report_pla)
-
-print(f"\nObserved Difference in AUC (Sertraline − Placebo): {observed_diff:.3f}")
-
-# --- Permutation test on AUC difference ---
-combined_y_true = np.concatenate([ser_y_true, pla_y_true])
-combined_y_pred = np.concatenate([ser_y_pred, pla_y_pred])
-group_labels     = np.array([1]*len(ser_y_true) + [0]*len(pla_y_true))
-
-n_permutations = 1000
-permuted_diffs = []
-
-for i in range(n_permutations):
-    shuffled = np.random.permutation(group_labels)
-    idx_ser = shuffled == 1
-    idx_pla = shuffled == 0
-
-    # Both groups must be non-empty
-    if idx_ser.sum() > 0 and idx_pla.sum() > 0:
-        auc_ser = roc_auc_score(combined_y_true[idx_ser], combined_y_pred[idx_ser])
-        auc_pla = roc_auc_score(combined_y_true[idx_pla], combined_y_pred[idx_pla])
-        permuted_diffs.append(auc_ser - auc_pla)
-
-permuted_diffs = np.array(permuted_diffs)
-p_value = np.mean(np.abs(permuted_diffs) >= np.abs(observed_diff))
-
-print(f"Permutation test p-value: {p_value:.4f}")
-
-# ------------------ Paired t test ------------------
-# Compute per-subject squared errors for each model
-# (Lower error indicates better performance)
-ser_sq_errors = (ser_y_true - ser_y_pred)**2
-pla_sq_errors = (pla_y_true - pla_y_pred)**2
-
-# Check that the number of samples is the same in both groups
-# (This must be true for a paired t-test)
-if len(ser_sq_errors) == len(pla_sq_errors):
-    t_stat, p_value_ttest = ttest_rel(ser_sq_errors, pla_sq_errors)
-    print(f"Paired t-test result: t-statistic = {t_stat:.2f}, p-value = {p_value_ttest:.4f}")
-else:
-    print("Data for the two models are not paired. A paired t-test cannot be applied.")
-#######################################################################################################################
-# Test with covariates
-import pandas as pd
-import numpy as np
-from scipy.stats import pearsonr, ttest_ind
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-# --- 1. Load your single table into `df` ---
-x_path = '/.../EMBARC/data/06_BART_regression/Input/x/Site_normalization/Tier1/Tier1_selected_ses-1_PLA (copy 1).csv'
-
-feature_number = 14 # 14 or 1302 or 413 or 324
-random_seed = 42
-np.random.seed(random_seed)
-random.seed(random_seed)
-selected_features = 10
-max_display = 20
-
-# Process X
-# X_df = pd.read_csv(x_path, index_col=0, header = None) # No labels for columns
-X_df = pd.read_csv(x_path, index_col=0) # have labels for columns
-X_df = remove_substrings(X_df, remove_in_cells=True)
-X = X_df.T # Becareful!!!
-feature_names = X_df.index.tolist() # Row is feature name
-# X = X_df
-# feature_names = X_df.columns.tolist() # Columns is feature name
-feature_names = [fname.replace("original-", "") for fname in feature_names]
-
-print("X shape (subjects, features):", X.shape)  # Expected (93, 1302)
-imaging_only = X.iloc[:, :feature_number]
-df = X
-
-# --- 3. Identify which columns are “imaging features” ---
-# We treat everything except ['age','gender','gender_num'] as a feature.
-# If you have an ID column, drop it or include it here:
-exclude = {'Age', 'Gender', 'gender_num'}
-feature_names = [c for c in imaging_only.columns if c not in exclude]
-
-# --- 4. Loop over features: correlate with age, t‐test by gender ---
-results = []
-for feat in feature_names:
-    x = imaging_only[feat].astype(float).values
-    age = df['Age'].astype(float).values
-    gen = df['Gender'].values  # 0 or 1
-
-    # 4a) Pearson correlation with age
-    #    If you prefer Spearman, swap to spearmanr(x, age).
-    r_age, p_age = pearsonr(x, age)
-
-    # 4b) Welch’s t‐test between male vs. female
-    x_male   = x[gen == 1]
-    x_female = x[gen == 0]
-    t_stat, p_gender = ttest_ind(x_male, x_female, equal_var=False, nan_policy='omit')
-
-    results.append({
-        'feature': feat,
-        'r_age'   : r_age,
-        'p_age'   : p_age,
-        't_gender': t_stat,
-        'p_gender': p_gender
-    })
-
-results_df = pd.DataFrame(results)
-
-# (Optional) 5. Adjust for multiple comparisons (e.g. FDR) if you have many features
-from statsmodels.stats.multitest import multipletests
-
-# Correct raw p_age
-_, p_age_fdr, _, _ = multipletests(results_df['p_age'], alpha=0.05, method='fdr_bh')
-results_df['p_age_fdr'] = p_age_fdr
-
-# Correct raw p_gender
-_, p_gender_fdr, _, _ = multipletests(results_df['p_gender'], alpha=0.05, method='fdr_bh')
-results_df['p_gender_fdr'] = p_gender_fdr
-
-# 6. List features that are significant (e.g. FDR < 0.05)
-sig_age_feats    = results_df.loc[results_df['p_age_fdr'] < 0.05, 'feature'].tolist()
-sig_gender_feats = results_df.loc[results_df['p_gender_fdr'] < 0.05, 'feature'].tolist()
-
-print("Features significantly correlated with age (FDR < 0.05):")
-print(sig_age_feats)
-print()
-print("Features significantly different by gender (FDR < 0.05):")
-print(sig_gender_feats)
-
-# --- 7. Plot top hits ---
-colors_age = ['red' if p < 0.05 else 'grey'
-              for p in results_df['p_age_fdr']]
-
-plt.figure(figsize=(8, 4))
-sns.barplot(
-    x='feature',
-    y='r_age',
-    data=results_df,
-    palette=colors_age
-)
-plt.axhline(0, color='black', linewidth=0.8)
-plt.xticks(rotation=45, ha='right')
-plt.title("Feature‐wise r_age  (red = p_age_fdr < 0.05)")
-plt.xlabel("Feature")
-plt.ylabel("Pearson r with Age")
-plt.tight_layout()
-plt.show()
-
-
-# ---------------------------------------------------
-# 4) Plot t_gender, coloring red if p_gender_fdr < 0.05
-# ---------------------------------------------------
-colors_gender = ['red' if p < 0.05 else 'grey'
-                 for p in results_df['p_gender_fdr']]
-
-plt.figure(figsize=(8, 4))
-sns.barplot(
-    x='feature',
-    y='t_gender',
-    data=results_df,
-    palette=colors_gender
-)
-plt.axhline(0, color='black', linewidth=0.8)
-plt.xticks(rotation=45, ha='right')
-plt.title("Feature‐wise t_gender  (red = p_gender_fdr < 0.05)")
-plt.xlabel("Feature")
-plt.ylabel("t‐statistic for Gender")
-plt.tight_layout()
-plt.show()
-##################################################################################################################################
-# Open .pkl files
-import pandas as pd
-import pickle
-
-# Replace 'filename.pkl' with the path to your pickle file
-with open('/.../EMBARC/data/07_Maarten/data/data_frames/tbss.pkl', 'rb') as file:
-    data = pickle.load(file)
-
-# Check if the loaded object is a DataFrame
-if isinstance(data, pd.DataFrame):
-    # Save DataFrame as CSV without the index
-    data.to_csv('/.../EMBARC/data/06_BART_regression/Input/x/Previous_study_result/tbss.csv', sep='\t', index=True)
-    print("Data saved to output.csv")
-else:
-    print("The loaded object is not a pandas DataFrame.")
-
-# Now 'data' holds the Python object loaded from the pickle file
-print(data)
-#####################################################################################################################
-# Filter the csv
-import pandas as pd
-
-# Path to your Excel file
-file_path = '/.../EMBARC/data/06_BART_regression/Input/x/Previous_study_result/ses-2_Combined-model.xlsx'
-
-# Read in the sheets from the Excel file
-sheet1 = pd.read_excel(file_path, sheet_name='Sheet1')
-sheet2 = pd.read_excel(file_path, sheet_name='Sheet2')
-sheet3 = pd.read_excel(file_path, sheet_name='Sheet3')
-sheet4 = pd.read_excel(file_path, sheet_name='Sheet4')
-
-# Extract the unique subject IDs from sheet1 (using 'subject_id')
-subjects = sheet1[['subject_id']].drop_duplicates()
-
-# Merge sheets 2, 3, and 4 with sheet1's subject IDs using a left join.
-sheet2_merged = subjects.merge(sheet2, on='subject_id', how='left')
-sheet3_merged = subjects.merge(sheet3, on='subject_id', how='left')
-sheet4_merged = subjects.merge(sheet4, on='subject_id', how='left')
-
-# Display the first few rows of each merged dataframe
-print("Sheet 2 Merged:")
-print(sheet2_merged.head())
-print("\nSheet 3 Merged:")
-print(sheet3_merged.head())
-print("\nSheet 4 Merged:")
-print(sheet4_merged.head())
-
-# Optionally, save the merged data back to a new Excel file with multiple sheets
-output_path = '/.../EMBARC/data/06_BART_regression/Input/x/Previous_study_result/ses-2_Combined-model_merged.xlsx'
-with pd.ExcelWriter(output_path) as writer:
-    sheet1.to_excel(writer, sheet_name='Sheet1', index=False)
-    sheet2_merged.to_excel(writer, sheet_name='Sheet2', index=False)
-    sheet3_merged.to_excel(writer, sheet_name='Sheet3', index=False)
-    sheet4_merged.to_excel(writer, sheet_name='Sheet4', index=False)
-
-
-
-#######################################################################################################################
-# Feature distribution
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_pdf import PdfPages
-import pandas as pd
-import numpy as np
-
-# Load the data
-# --- Utility Functions ---
-def parse_score(score_str):
-    """
-    Extract numeric value from a string.
-    For example, '+AC0-20' will return -20.0.
-    """
-    matches = re.findall(r"[-+]?\d*\.?\d+", score_str)
-    if not matches:
-        return np.nan
-    for m in matches:
-        if m.startswith('-'):
-            try:
-                return float(m)
-            except:
-                pass
-    try:
-        return float(matches[0])
-    except:
-        return np.nan
-
-def remove_AF8(feature):
-    # This pattern matches an optional plus sign, then "AF8", then an optional hyphen.
-    return re.sub(r'\+?AF8?', '', feature)
-
-# --- Read and process data (unchanged) ---
-x_path = "/.../EMBARC/data/06_BART_regression/Input/x/Radiomics/radiomics_ses_1_SER.csv"
-y_path = "/.../EMBARC/data/06_BART_regression/Input/y/deltaHAMD_ses_1_SER.csv"
-
-# Process X
-X_df = pd.read_csv(x_path, index_col=0)
-X_df = X_df.astype(str).map(parse_score)
-feature_names = X_df.index.tolist()
-feature_names = [remove_AF8(fname) for fname in feature_names]
-feature_names = [fname.replace("original-", "") for fname in feature_names]
-X = X_df.T.astype(np.float64).to_numpy()
-print("X shape (subjects x features + covariate):", X.shape)  # Expected (93, 1302)
-
-# Process y
-try:
-    y_df = pd.read_csv(y_path, header=None, encoding='utf-8-sig')
-    if y_df.shape[1] == 0:
-        raise ValueError("Empty DataFrame")
-    y = y_df.iloc[:, 0].apply(parse_score).to_numpy(dtype=np.float64)
-except Exception:
-    with open(y_path, 'r', encoding='utf-8-sig') as f:
-        lines = f.read().strip().splitlines()
-    y = np.array([
-        parse_score(line.split(',')[0] if ',' in line else line.split()[0])
-        for line in lines if line.strip()
-    ], dtype=np.float64)
-print("y shape:", y.shape)  # Expected (93,)
-
-# Convert X (a NumPy array) into a DataFrame with the processed feature names as columns.
-n_subjects, n_features = X.shape
-data = pd.DataFrame(X, columns=feature_names)
-print("Final X shape (subjects x features):", data.shape)
-
-# Set parameters for plotting: 100 histograms per page (10x10 grid)
-graphs_per_page = 100
-n_pages = int(np.ceil(n_features / graphs_per_page))
-output_pdf = "/.../EMBARC/data/06_BART_regression/Output/Feature_distribution/Scaled_ses_1_SER_histograms_grid.pdf"
-
-with PdfPages(output_pdf) as pdf:
-    for page in range(n_pages):
-        start = page * graphs_per_page
-        end = min((page + 1) * graphs_per_page, n_features)
-        features_on_page = data.columns[start:end]
-
-        n_plots = len(features_on_page)
-        n_cols = 5
-        n_rows = int(np.ceil(n_plots / n_cols))
-
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 2 * n_rows))
-        axes = axes.flatten()
-
-        for i, col in enumerate(features_on_page):
-            axes[i].hist(data[col], bins=20, edgecolor='black')
-            axes[i].set_title(col, fontsize=8)
-            axes[i].set_xticks([])
-            axes[i].set_yticks([])
-
-        # Remove any unused subplots in the grid.
-        for j in range(i + 1, len(axes)):
-            fig.delaxes(axes[j])
-
-        plt.tight_layout()
-        pdf.savefig(fig)
-        plt.close(fig)
-
-print(f"Saved multipage PDF with histograms to {output_pdf}")
-#######################################################################################################################
