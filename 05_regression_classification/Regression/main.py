@@ -1,5 +1,5 @@
 # Mancy Chen 20/02/2025
-# Regression with BART
+# Regression with XGBoost
 import os, joblib, csv
 os.environ["PYTHONWARNINGS"] = "ignore"
 import warnings
