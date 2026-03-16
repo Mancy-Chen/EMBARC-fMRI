@@ -1,5 +1,5 @@
 # Mancy Chen 20/02/2025
-# Classification with BART
+# Classification with XGBoost
 import os,joblib, csv
 os.environ["PYTHONWARNINGS"] = "ignore"
 import warnings
@@ -13,7 +13,7 @@ warnings.filterwarnings(
 # Ignore all ConvergenceWarnings from IterativeImputer.
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 # import sys
-# sys.path.append('/scratch/mchen/miniconda3/lib/python3.10/site-packages')
+# sys.path.append('/.../miniconda3/lib/python3.10/site-packages')
 import re
 import os
 import time
@@ -91,9 +91,9 @@ def remove_substrings(df, remove_in_cells=False):
 
 def get_config(i: int,
                j: int,
-               base_x_dir="/data/projects/EMBARC/data/06_BART_regression/Input/x",
-               base_y_dir="/data/projects/EMBARC/data/06_BART_regression/Input/y/Imputation/classification/Remission",
-               base_out_dir="/data/projects/EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b",
+               base_x_dir="/.../EMBARC/data/06_BART_regression/Input/x",
+               base_y_dir="/.../EMBARC/data/06_BART_regression/Input/y/Imputation/classification/Remission",
+               base_out_dir="/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Remission/Tier2b",
                x_subpath="Site_normalization/Tier2b",
                y_prefix="deltaHAMD",
                out_suffix="save_feature_and_model",

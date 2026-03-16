@@ -10,7 +10,7 @@ from scipy.stats import binomtest, norm
 # =========================================================
 TASK = "Response"   # choose: "Remission" or "Response"
 
-BASE_ROOT = "/data/projects/EMBARC/data/06_BART_regression/Output/Classification_plot"
+BASE_ROOT = "/.../EMBARC/data/06_BART_regression/Output/Classification_plot"
 BASE = os.path.join(BASE_ROOT, TASK)
 
 MODEL_DIRS = {

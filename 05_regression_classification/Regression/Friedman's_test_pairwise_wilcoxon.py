@@ -8,7 +8,7 @@ from scipy.stats import friedmanchisquare, wilcoxon
 # =========================================================
 # Settings
 # =========================================================
-BASE = "/data/projects/EMBARC/data/06_BART_regression/Output/Regression_plot"
+BASE = "/.../EMBARC/data/06_BART_regression/Output/Regression_plot"
 
 MODEL_DIRS = {
     "Tier_1": os.path.join(BASE, "Tier_1"),

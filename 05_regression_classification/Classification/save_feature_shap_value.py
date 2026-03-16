@@ -6,10 +6,10 @@ import pandas as pd
 # EDIT THESE PATHS
 # =========================
 # Where your result folders live (each has reshaped_* arrays)
-BASE_OUT_DIR = "/data/projects/EMBARC/data/06_BART_regression/Output/Classification_plot/Response/Tier0_ablation/Clinical_variables/"
+BASE_OUT_DIR = "/.../EMBARC/data/06_BART_regression/Output/Classification_plot/Response/Tier0_ablation/Clinical_variables/"
 
 # Where the raw X files live (only used to read feature names)
-BASE_X_DIR = "/data/projects/EMBARC/data/06_BART_regression/Input/x"
+BASE_X_DIR = "/.../EMBARC/data/06_BART_regression/Input/x"
 X_SUBPATH  = "Site_normalization/Tier0_ablation/Clinical_variables"
 TIER_LABEL = "Tier0"  # Tier1_selected_ses-1_SER.csv etc.
 

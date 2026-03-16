@@ -13,7 +13,7 @@ warnings.filterwarnings(
 # Ignore all ConvergenceWarnings from IterativeImputer.
 warnings.filterwarnings("ignore", category=ConvergenceWarning)
 import sys
-sys.path.append('/scratch/mchen/miniconda3/lib/python3.10/site-packages')
+sys.path.append('/.../miniconda3/lib/python3.10/site-packages')
 import re
 import os
 import time
@@ -79,9 +79,9 @@ def remove_substrings(df, remove_in_cells=False):
 
 def get_config(i: int,
                j: int,
-               base_x_dir="/data/projects/EMBARC/data/06_BART_regression/Input/x",
-               base_y_dir="/data/projects/EMBARC/data/06_BART_regression/Input/y/Imputation",
-               base_out_dir="/data/projects/EMBARC/data/06_BART_regression/Output/Regression_plot/Tier_2b",
+               base_x_dir="/.../EMBARC/data/06_BART_regression/Input/x",
+               base_y_dir="/.../EMBARC/data/06_BART_regression/Input/y/Imputation",
+               base_out_dir="/.../EMBARC/data/06_BART_regression/Output/Regression_plot/Tier_2b",
                x_subpath="Site_normalization/Tier2b",
                y_prefix="deltaHAMD",
                out_suffix="save_feature_and_model",
